@@ -9,6 +9,69 @@ topbox = dict(boxstyle='round', ec='none', fc='w', alpha=0.6)
 format_tops={'fontsize':10, 'color':'blue', 'ha':'right', 'bbox':topbox}
 format_title={'fontsize':14, 'weight':'bold'}
 
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  
+def contactcement(K0, G0, phi, phi_c=0.4, Cn=8.6, Kc=37, Gc=45, scheme=2):
+    PR0=(3*K0-2*G0)/(6*K0+2*G0)
+    PRc = (3*Kc-2*Gc)/(6*Kc+2*Gc)
+    if scheme == 1: # scheme 1: cement deposited at grain contacts
+        alpha = ((phi_c-phi)/(3*Cn*(1-phi_c))) ** (1/4)
+    else: # scheme 2: cement evenly deposited on grain surface
+        alpha = ((2*(phi_c-phi))/(3*(1-phi_c)))**(1/2)
+    LambdaN = (2*Gc*(1-PR0)*(1-PRc)) / (np.pi*G0*(1-2*PRc))
+    N1 = -0.024153*LambdaN**-1.3646
+    N2 = 0.20405*LambdaN**-0.89008
+    N3 = 0.00024649*LambdaN**-1.9864
+    Sn = N1*alpha**2 + N2*alpha + N3
+    LambdaT = Gc/(np.pi*G0)
+    T1 = -10**-2*(2.26*PR0**2+2.07*PR0+2.3)*LambdaT**(0.079*PR0**2+0.1754*PR0-1.342)
+    T2 = (0.0573*PR0**2+0.0937*PR0+0.202)*LambdaT**(0.0274*PR0**2+0.0529*PR0-0.8765)
+    T3 = 10**-4*(9.654*PR0**2+4.945*PR0+3.1)*LambdaT**(0.01867*PR0**2+0.4011*PR0-1.8186)
+    St = T1*alpha**2 + T2*alpha + T3
+    K_DRY = 1/6*Cn*(1-phi_c)*(Kc+(4/3)*Gc)*Sn
+    G_DRY = 3/5*K_DRY+3/20*Cn*(1-phi_c)*Gc*St
+    return K_DRY, G_DRY
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  
+def constantcement(K0, G0, phi, phi_cem=0.38, phi_c=0.4, Cn=8.6, Kc=37, Gc=45, scheme=2):
+    # contact cement model
+    K_HI, G_HI = contactcement(K0, G0, phi, phi_c=phi_c, Cn=Cn, Kc=Kc, Gc=Gc, scheme=scheme)
+    # lower bound Hashin-Shtrikman starting from phi_cem
+    Kcc, Gcc = contactcement(K0, G0, phi_cem, phi_c=phi_c, Cn=Cn, Kc=Kc, Gc=Gc, scheme=scheme)
+    K_LO = -4/3*Gcc + (((phi/phi_cem)/(Kcc+4/3*Gcc)) + ((1-phi/phi_cem)/(K0+4/3*Gcc)))**-1
+    tmp = Gcc/6*((9*Kcc+8*Gcc) / (Kcc+2*Gcc))
+    G_LO= -tmp + ((phi/phi_cem)/(Gcc+tmp) + ((1-phi/phi_cem)/(G0+tmp)))**-1
+    # initialize empty vectors for K and G dry
+    K_DRY, G_DRY=(np.full(phi.size, np.nan) for _ in range(2))
+    # for porosities>phi_cem use [K,G]_HI = contact cement model
+    # for porosities<=phi_cem use [K,G]_LO = constant cement model
+    K_DRY[phi>phi_cem]=K_HI[phi>phi_cem]
+    K_DRY[phi<=phi_cem]=K_LO[phi<=phi_cem]
+    G_DRY[phi>phi_cem]=G_HI[phi>phi_cem]
+    G_DRY[phi<=phi_cem]=G_LO[phi<=phi_cem]
+    return K_DRY, G_DRY
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  
+def inccement(K0, G0, phi, phi_cem=0.38, phi_c=0.4, Cn=8.6, Kc=37, Gc=45, scheme=2):
+    Kcc, Gcc = contactcement(K0, G0, phi_cem, phi_c=phi_c, Cn=Cn, Kc=Kc, Gc=Gc, scheme=scheme)
+    K_DRY = -4/3*G0 + (((phi/phi_cem)/(Kcc+4/3*G0)) + ((1-phi/phi_cem)/(K0+4/3*G0)))**-1
+    tmp = G0/6*((9*K0+8*G0) / (K0+2*G0))
+    G_DRY = -tmp + ((phi/phi_cem)/(Gcc+tmp) + ((1-phi/phi_cem)/(G0+tmp)))**-1
+    return K_DRY, G_DRY
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  
+def vels(k_dry,mu_dry,k_min,rho_min,k_fl,rho_fl,phi):
+    # converts all inputs to SI (density in kg/m3 and moduli in Pa)
+    KD = k_dry*1e9
+    GD = mu_dry*1e9
+    K0 = k_min*1e9
+    D0 = rho_min*1e3
+    Kf = k_fl*1e9
+    Df = rho_fl*1e3
+    rho = D0*(1-phi)+Df*phi
+    K = KD + (1-KD/K0)**2 / ( (phi/Kf) + ((1-phi)/K0) - (KD/K0**2) )
+    vp = np.sqrt((K+4/3*GD)/rho)
+    vs = np.sqrt(GD/rho)
+    return vp, vs, rho/1e3, K/1e9
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  
 def blok_plot(REF,BLK,ztop=None,zbot=None):
